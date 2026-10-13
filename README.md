@@ -464,6 +464,46 @@ static esp_err_t memory_get(httpd_req_t *req)
 
 The `static` copy is safe because the HTTP server runs every handler on one task. If more than one task can serialize, give each its own copy or guard it with a lock. Pass a copy rather than the live snapshot: a slow client would otherwise hold the lock that the sampler needs.
 
+### Storage
+
+Flash and NVS are a different kind of fact: they change slowly and do not come from the sampler. `heaptop_storage_read()` (see [include/heaptop.h](include/heaptop.h)) reads them on demand into a `heaptop_storage_t`, and `heaptop_json_storage()` writes that as its own JSON document, with the same chunked sink as above. Poll it every few seconds at the most, not at the sampler's rate: the NVS part walks the partition.
+
+heaptop reports raw facts only. Sizes are bytes, NVS figures are entries (`entry_bytes` bytes each, 32 on every chip), and there are no limits, percentages, colours or wording: how full is "too full", and what a partition is called on screen, belong to the application.
+
+```json
+{"flash_size":4194304,
+ "partitions":[{"label":"nvs","type":"data","subtype":"nvs","address":36864,"size":65536,"encrypted":false,"running":false},
+               {"label":"ota_0","type":"app","subtype":"ota_0","address":131072,"size":1572864,"encrypted":false,"running":true}],
+ "partitions_truncated":false,
+ "nvs":{"label":"nvs","entry_bytes":32,"total":1890,"used":700,"available":1100,
+        "namespaces":[{"name":"evt_log","entries":540},{"name":"storage","entries":12}],"namespaces_truncated":false}}
+```
+
+| Field | Meaning |
+|---|---|
+| `flash_size` | the chip's size in bytes, or `null` when it could not be read |
+| `partitions[]` | every row ESP-IDF lists for the partition table, in table order, up to `HEAPTOP_STORAGE_MAX_PARTITIONS` (16; `partitions_truncated` says there were more). `type` and `subtype` are the ESP-IDF names (`app`, `data`, `factory`, `ota_0`…`ota_15`, `nvs`, `phy`, `ota`, `nvs_keys`, `littlefs`, `fat`, `spiffs`, …), or a hex string such as `"0x99"` for an id heaptop does not know. `running` marks the app partition this firmware booted from |
+| `nvs` | `null` when the statistics could not be read (NVS not initialised, no such partition). Otherwise `total`, `used` and `available` entries (`available` is what can still be written: free entries less the page NVS keeps in reserve), and `namespaces[]` with the entries each one uses, its own entry included. A blob uses several. Up to `HEAPTOP_STORAGE_MAX_NAMESPACES` (16) |
+
+`partitions[]` may not cover the whole chip (the bootloader, the partition table itself and any unallocated space are not always rows). An application that draws the flash as a bar should treat `flash_size` minus the sum of the partition sizes as "outside the partitions". What the calls cost:
+
+- `heaptop_storage_read()` allocates only the NVS iterator, for the length of the call, and needs about 150 bytes of stack. It does not need `heaptop_init()`.
+- `heaptop_json_storage()` allocates nothing and uses about 600 bytes of stack, like the snapshot writer.
+- `heaptop_storage_t` is a little under 1 KiB: keep it `static`, as the snapshot copy above.
+
+```c
+static esp_err_t storage_get(httpd_req_t *req)
+{
+  static heaptop_storage_t storage;
+  heaptop_storage_read(NULL, &storage);  // NULL = the default NVS partition, "nvs"
+
+  httpd_resp_set_type(req, "application/json");
+  if (!heaptop_json_storage(&storage, send_chunk, req))
+    return ESP_FAIL;  // the client went away
+  return httpd_resp_send_chunk(req, NULL, 0);
+}
+```
+
 ## Health checks
 
 | Check | Fires when | Kconfig default |
@@ -498,6 +538,7 @@ See [include/heaptop.h](include/heaptop.h) and [include/heaptop_types.h](include
 | `heaptop_init(cfg)` / `heaptop_deinit()` | start / stop the sampler (idempotent) |
 | `heaptop_get_snapshot(&s)` | copy of the latest sample: regions, tasks, trends, failures, alerts |
 | `heaptop_json_snapshot(&s, limits, flags, sink, ctx)` | write such a copy as one JSON document, in chunks (see [JSON export](#json-export)) |
+| `heaptop_storage_read(nvs_label, &st)` / `heaptop_json_storage(&st, sink, ctx)` | read the flash size, the partition table and the NVS usage on demand, and write them as one JSON document (see [Storage](#storage)) |
 | `heaptop_clear()` | start a fresh window |
 | `heaptop_set_alert_cb(cb, ctx)` | be told when a check fires or clears |
 | `heaptop_stress_cpu(pct, seconds)` / `heaptop_stress_stop()` | CPU load on every core |
