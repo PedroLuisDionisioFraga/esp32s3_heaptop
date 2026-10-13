@@ -22,6 +22,7 @@ run() {
 
 run test_calc "$root/src/heaptop_calc.c"
 run test_json "$root/src/heaptop_json.c" "$root/src/heaptop_stream.c" "$root/src/heaptop_render.c" "$root/src/heaptop_calc.c"
+run test_storage_json "$root/src/heaptop_json.c" "$root/src/heaptop_stream.c" "$root/src/heaptop_render.c" "$root/src/heaptop_calc.c"
 run test_render "$root/src/heaptop_render.c" "$root/src/heaptop_calc.c"
 run test_stream "$root/src/heaptop_stream.c" "$root/src/heaptop_render.c" "$root/src/heaptop_calc.c"
 
