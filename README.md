@@ -313,14 +313,14 @@ Devices without a console can stream from boot with `CONFIG_HEAPTOP_STREAM_AT_BO
 Add the component:
 
 ```bash
-idf.py add-dependency "pedroluisdionisiofraga/heaptop^0.4.0"
+idf.py add-dependency "pedroluisdionisiofraga/heaptop^0.5.0"
 ```
 
 or in `main/idf_component.yml`:
 
 ```yaml
 dependencies:
-  pedroluisdionisiofraga/heaptop: "^0.4.0"
+  pedroluisdionisiofraga/heaptop: "^0.5.0"
 ```
 
 Requires ESP-IDF 6.0 or later. Then start it and register the command:

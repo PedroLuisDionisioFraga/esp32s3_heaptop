@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-13
+
 ### Added
 
 - `heaptop_storage_read()` (`include/heaptop.h`): reads the flash chip size, the partition table (with the running app partition marked) and the NVS usage (entries total, used and available, and the entries each namespace uses) on demand into a `heaptop_storage_t`. It takes the NVS partition label, or NULL for the default one, and does not need `heaptop_init()`.
