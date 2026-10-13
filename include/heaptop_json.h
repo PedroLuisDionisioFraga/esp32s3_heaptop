@@ -67,6 +67,28 @@ typedef bool (*heaptop_json_sink_t)(const char *data, size_t len, void *ctx);
 bool heaptop_json_snapshot(const heaptop_snapshot_t *s, const heaptop_thresholds_t *limits, uint32_t flags,
                            heaptop_json_sink_t sink, void *ctx);
 
+/**
+ * @brief Write @p s, the flash and NVS facts from heaptop_storage_read(), as one JSON document.
+ *
+ * A separate document from the snapshot: it changes slowly, so a client polls it far less often. Same rules as
+ * heaptop_json_snapshot(): chunks go to @p sink, nothing is allocated, no trailing newline. Raw values only: sizes
+ * are bytes, NVS figures are entries (`entry_bytes` bytes each), and the partition `type` and `subtype` are the
+ * ESP-IDF names ("app", "data", "factory", "ota_0", "nvs", "littlefs", ...), or a hex string such as "0x99" for an id
+ * heaptop does not know. Uses about 600 bytes of stack.
+ *
+ * Document layout (keys in this order):
+ *   flash_size (bytes, or null when the chip size could not be read),
+ *   partitions [{label, type, subtype, address, size, encrypted, running}] and partitions_truncated,
+ *   nvs {label, entry_bytes, total, used, available, namespaces [{name, entries}], namespaces_truncated},
+ *     or null when the NVS statistics could not be read.
+ *
+ * @param s A filled heaptop_storage_t; its strings must be zero-terminated.
+ * @param sink Called for every chunk.
+ * @param ctx Passed to @p sink.
+ * @return true if the whole document went out; false for a NULL @p s or @p sink, or when @p sink stopped it.
+ */
+bool heaptop_json_storage(const heaptop_storage_t *s, heaptop_json_sink_t sink, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

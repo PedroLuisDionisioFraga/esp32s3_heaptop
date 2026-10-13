@@ -123,6 +123,24 @@ esp_err_t heaptop_clear(void);
 esp_err_t heaptop_set_alert_cb(heaptop_alert_cb_t cb, void *ctx);
 
 /**
+ * @brief Read the flash chip size, the partition table and the NVS usage into @p out.
+ *
+ * Raw facts for the application to present: see heaptop_storage_t, and heaptop_json_storage() to send them to a web
+ * UI. It does not need heaptop_init() and has no sampler behind it: every call reads the flash state again, in the
+ * calling task. The NVS part walks the partition once, so poll it slowly (every few seconds at the most), not at the
+ * sampler's rate. It allocates only the iterator of that walk, for as long as the call lasts, and uses about 150
+ * bytes of stack; the structure itself is a little under 1 KiB, so keep it static in a task with a small stack.
+ *
+ * Partial data is valid: what could not be read stays zero or false (flash_size == 0, nvs_present == false) and the
+ * call still returns ESP_OK.
+ *
+ * @param nvs_label Label of the NVS partition to describe, or NULL for the default one ("nvs").
+ * @param[out] out Receives the facts.
+ * @return ESP_OK, or ESP_ERR_INVALID_ARG for a NULL @p out.
+ */
+esp_err_t heaptop_storage_read(const char *nvs_label, heaptop_storage_t *out);
+
+/**
  * @brief Load every core to @p pct percent, for benchmarks and soak tests.
  *
  * One worker task per core (`ht_stress0`, `ht_stress1`), priority 1, busy

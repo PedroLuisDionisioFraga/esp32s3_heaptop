@@ -8,9 +8,10 @@ idf_component_register(SRCS "src/heaptop.c"
                             "src/heaptop_heap.c"
                             "src/heaptop_json.c"
                             "src/heaptop_render.c"
+                            "src/heaptop_storage.c"
                             "src/heaptop_stream.c"
                             "src/heaptop_stress.c"
                             "src/heaptop_tasks.c"
                        INCLUDE_DIRS "include"
                        REQUIRES esp_common
-                       PRIV_REQUIRES console esp_timer heap log)
+                       PRIV_REQUIRES app_update console esp_partition esp_timer heap log nvs_flash spi_flash)

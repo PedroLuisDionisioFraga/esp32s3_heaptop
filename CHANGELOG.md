@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-13
+
+### Added
+
+- `heaptop_storage_read()` (`include/heaptop.h`): reads the flash chip size, the partition table (with the running app partition marked) and the NVS usage (entries total, used and available, and the entries each namespace uses) on demand into a `heaptop_storage_t`. It takes the NVS partition label, or NULL for the default one, and does not need `heaptop_init()`.
+- `heaptop_json_storage()` (`include/heaptop_json.h`): writes that structure as one JSON document through a chunk callback, like `heaptop_json_snapshot()`: nothing allocated, about 600 bytes of stack. Raw values only (bytes, entries, ESP-IDF type and subtype names); limits, percentages and wording are left to the application. Covered by a host test (`test/host/test_storage_json.c`).
+- The component now also requires `app_update`, `esp_partition`, `nvs_flash` and `spi_flash` (private).
+
 ## [0.4.0] - 2026-10-10
 
 ### Added

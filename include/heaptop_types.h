@@ -156,6 +156,55 @@ typedef struct heaptop_snapshot
   heaptop_task_stats_t tasks[HEAPTOP_MAX_TASKS];
 } heaptop_snapshot_t;
 
+/** Partition table rows and NVS namespaces one heaptop_storage_t can carry. Like HEAPTOP_MAX_TASKS, they set the size
+ * of the struct: to change them define them for the whole build, never in one component only. */
+#ifndef HEAPTOP_STORAGE_MAX_PARTITIONS
+#define HEAPTOP_STORAGE_MAX_PARTITIONS 16
+#endif
+#ifndef HEAPTOP_STORAGE_MAX_NAMESPACES
+#define HEAPTOP_STORAGE_MAX_NAMESPACES 16
+#endif
+
+/** One row of the partition table. Raw ids as ESP-IDF defines them (esp_partition_type_t, esp_partition_subtype_t). */
+typedef struct heaptop_partition
+{
+  char label[17];   /**< zero-terminated, at most 16 characters */
+  uint8_t type;     /**< esp_partition_type_t: 0 app, 1 data */
+  uint8_t subtype;  /**< esp_partition_subtype_t; its meaning depends on the type */
+  bool encrypted;   /**< flash encryption applies to this partition */
+  bool running;     /**< the app partition this firmware is running from */
+  uint32_t address; /**< offset in the flash chip, bytes */
+  uint32_t size;    /**< bytes */
+} heaptop_partition_t;
+
+/** One NVS namespace and what it occupies. */
+typedef struct heaptop_nvs_namespace
+{
+  char name[16];    /**< zero-terminated, at most 15 characters */
+  uint32_t entries; /**< entries the namespace uses, its own entry included; a blob uses several */
+} heaptop_nvs_namespace_t;
+
+/**
+ * What the flash chip holds and how full its NVS partition is. Raw facts and no judgement: sizes are bytes or entries,
+ * and any limit, percentage, colour or wording is the application's. Filled by heaptop_storage_read().
+ */
+typedef struct heaptop_storage
+{
+  uint32_t flash_size; /**< chip size in bytes; 0 = could not be read */
+  uint8_t partition_count;
+  bool partitions_truncated; /**< more partitions existed than HEAPTOP_STORAGE_MAX_PARTITIONS */
+  heaptop_partition_t partitions[HEAPTOP_STORAGE_MAX_PARTITIONS];
+  bool nvs_present;         /**< false when the NVS statistics could not be read (not initialised, no such partition) */
+  char nvs_label[17];       /**< the NVS partition the numbers below describe */
+  uint32_t nvs_entry_bytes; /**< size of one entry, bytes: entries x this is the space they take */
+  uint32_t nvs_total;       /**< all entries of the partition */
+  uint32_t nvs_used;        /**< entries in use */
+  uint32_t nvs_available;   /**< entries that can still be written: the unused ones, less NVS's reserve page */
+  uint8_t namespace_count;
+  bool namespaces_truncated; /**< more namespaces existed than HEAPTOP_STORAGE_MAX_NAMESPACES */
+  heaptop_nvs_namespace_t namespaces[HEAPTOP_STORAGE_MAX_NAMESPACES];
+} heaptop_storage_t;
+
 #ifdef __cplusplus
 }
 #endif

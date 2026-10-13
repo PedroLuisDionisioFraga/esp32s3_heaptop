@@ -10,13 +10,16 @@
 /* Most bytes one piece of the document can take, with every number at its widest and a task name made only of
  * escaped characters. A piece is never split across two chunks, so every reserve must hold its piece. The host test
  * writes a snapshot at its maximum to keep these honest. */
-#define PIECE_HEAD   224 /* up to 197: head, with both cores' load */
-#define PIECE_REGION 192 /* up to 154: one region object and its comma */
-#define PIECE_HEALTH 160 /* up to 110: end of regions, failures, every alert name */
-#define PIECE_LIMITS 224 /* up to 174 */
-#define PIECE_TASK   288 /* up to 264: one task object with its heap fields, and its comma */
-#define PIECE_NUMBER 12  /* a trend value and its comma */
-#define PIECE_SMALL  64  /* section headers and closers */
+#define PIECE_HEAD      224 /* up to 197: head, with both cores' load */
+#define PIECE_REGION    192 /* up to 154: one region object and its comma */
+#define PIECE_HEALTH    160 /* up to 110: end of regions, failures, every alert name */
+#define PIECE_LIMITS    224 /* up to 174 */
+#define PIECE_TASK      288 /* up to 264: one task object with its heap fields, and its comma */
+#define PIECE_NUMBER    12  /* a trend value and its comma */
+#define PIECE_SMALL     64  /* section headers and closers */
+#define PIECE_PARTITION 256 /* up to 229: one partition object and its comma, a label of six-byte escapes */
+#define PIECE_NVS       256 /* up to 207: the head of the "nvs" object, down to the opening of its namespace list */
+#define PIECE_NAMESPACE 160 /* up to 123: one namespace object and its comma */
 
 typedef struct json_out
 {
@@ -236,6 +239,165 @@ bool heaptop_json_snapshot(const heaptop_snapshot_t *s, const heaptop_thresholds
     _trend(&o, s);
   if (flags & HEAPTOP_JSON_TASKS)
     _tasks(&o, s);
+  if (_room(&o, PIECE_SMALL))
+    heaptop_buf_printf(&o.buf, "}");
+  _flush(&o);
+  return o.ok;
+}
+
+/* ---- storage document ---- */
+
+typedef struct name_row
+{
+  uint8_t id;
+  const char *name;
+} name_row_t;
+
+/* The ESP-IDF names of partition types and subtypes (esp_partition.h). A subtype id means different things under
+ * different types, so each type has its own list. An id that is not listed is written as hex. */
+static const name_row_t k_types[] = {{0x00, "app"}, {0x01, "data"}, {0x02, "bootloader"}, {0x03, "partition_table"}};
+static const name_row_t k_app_subtypes[] = {{0x00, "factory"}, {0x20, "test"}, {0x30, "tee_0"}, {0x31, "tee_1"}};
+static const name_row_t k_data_subtypes[] = {{0x00, "ota"},
+                                             {0x01, "phy"},
+                                             {0x02, "nvs"},
+                                             {0x03, "coredump"},
+                                             {0x04, "nvs_keys"},
+                                             {0x05, "efuse_em"},
+                                             {0x06, "undefined"},
+                                             {0x80, "esphttpd"},
+                                             {0x81, "fat"},
+                                             {0x82, "spiffs"},
+                                             {0x83, "littlefs"},
+                                             {0x90, "tee_ota"}};
+static const name_row_t k_bootloader_subtypes[] = {{0x00, "primary"}, {0x01, "ota"}, {0x02, "recovery"}};
+static const name_row_t k_table_subtypes[] = {{0x00, "primary"}, {0x01, "ota"}};
+
+#define ROWS(list) (list), (sizeof(list) / sizeof((list)[0]))
+
+static const char *_lookup(const name_row_t *rows, size_t n, uint8_t id)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    if (rows[i].id == id)
+      return rows[i].name;
+  }
+  return NULL;
+}
+
+/* A name as a quoted string, or the id as quoted hex ("0x99") when there is no name. */
+static void _put_name_or_hex(heaptop_buf_t *b, const char *name, uint8_t id)
+{
+  if (name != NULL)
+    heaptop_buf_printf(b, "\"%s\"", name);
+  else
+    heaptop_buf_printf(b, "\"0x%02x\"", (unsigned)id);
+}
+
+static void _put_subtype(heaptop_buf_t *b, uint8_t type, uint8_t subtype)
+{
+  if (type == 0x00 && subtype >= 0x10 && subtype <= 0x1f) /* ota_0 .. ota_15 */
+  {
+    heaptop_buf_printf(b, "\"ota_%u\"", (unsigned)(subtype - 0x10));
+    return;
+  }
+  const char *name = NULL;
+  if (type == 0x00)
+    name = _lookup(ROWS(k_app_subtypes), subtype);
+  else if (type == 0x01)
+    name = _lookup(ROWS(k_data_subtypes), subtype);
+  else if (type == 0x02)
+    name = _lookup(ROWS(k_bootloader_subtypes), subtype);
+  else if (type == 0x03)
+    name = _lookup(ROWS(k_table_subtypes), subtype);
+  _put_name_or_hex(b, name, subtype);
+}
+
+static void _storage_partitions(json_out_t *o, const heaptop_storage_t *s)
+{
+  const uint8_t n =
+    s->partition_count < HEAPTOP_STORAGE_MAX_PARTITIONS ? s->partition_count : HEAPTOP_STORAGE_MAX_PARTITIONS;
+  for (uint8_t i = 0; i < n; i++)
+  {
+    if (!_room(o, PIECE_PARTITION))
+      return;
+    heaptop_buf_t *b = &o->buf;
+    const heaptop_partition_t *p = &s->partitions[i];
+    heaptop_buf_printf(b, "%s{\"label\":", i ? "," : "");
+    heaptop_jsonutil_str(b, p->label);
+    heaptop_buf_printf(b, ",\"type\":");
+    _put_name_or_hex(b, _lookup(ROWS(k_types), p->type), p->type);
+    heaptop_buf_printf(b, ",\"subtype\":");
+    _put_subtype(b, p->type, p->subtype);
+    heaptop_buf_printf(b,
+                       ",\"address\":%lu,\"size\":%lu,\"encrypted\":%s,\"running\":%s}",
+                       (unsigned long)p->address,
+                       (unsigned long)p->size,
+                       p->encrypted ? "true" : "false",
+                       p->running ? "true" : "false");
+  }
+}
+
+/* The "nvs" object, from its opening down to the end of its namespace list. */
+static void _storage_nvs(json_out_t *o, const heaptop_storage_t *s)
+{
+  if (!_room(o, PIECE_NVS))
+    return;
+  heaptop_buf_t *b = &o->buf;
+  heaptop_buf_printf(b, "{\"label\":");
+  heaptop_jsonutil_str(b, s->nvs_label);
+  heaptop_buf_printf(b,
+                     ",\"entry_bytes\":%lu,\"total\":%lu,\"used\":%lu,\"available\":%lu,\"namespaces\":[",
+                     (unsigned long)s->nvs_entry_bytes,
+                     (unsigned long)s->nvs_total,
+                     (unsigned long)s->nvs_used,
+                     (unsigned long)s->nvs_available);
+
+  const uint8_t n =
+    s->namespace_count < HEAPTOP_STORAGE_MAX_NAMESPACES ? s->namespace_count : HEAPTOP_STORAGE_MAX_NAMESPACES;
+  for (uint8_t i = 0; i < n; i++)
+  {
+    if (!_room(o, PIECE_NAMESPACE))
+      return;
+    heaptop_buf_printf(&o->buf, "%s{\"name\":", i ? "," : "");
+    heaptop_jsonutil_str(&o->buf, s->namespaces[i].name);
+    heaptop_buf_printf(&o->buf, ",\"entries\":%lu}", (unsigned long)s->namespaces[i].entries);
+  }
+
+  if (_room(o, PIECE_SMALL))
+    heaptop_buf_printf(&o->buf, "],\"namespaces_truncated\":%s}", s->namespaces_truncated ? "true" : "false");
+}
+
+bool heaptop_json_storage(const heaptop_storage_t *s, heaptop_json_sink_t sink, void *ctx)
+{
+  if (s == NULL || sink == NULL)
+    return false;
+
+  json_out_t o;
+  o.sink = sink;
+  o.ctx = ctx;
+  o.ok = true;
+  heaptop_buf_init(&o.buf, o.mem, sizeof(o.mem));
+
+  if (_room(&o, PIECE_SMALL))
+  {
+    if (s->flash_size != 0)
+      heaptop_buf_printf(&o.buf, "{\"flash_size\":%lu,\"partitions\":[", (unsigned long)s->flash_size);
+    else
+      heaptop_buf_printf(&o.buf, "{\"flash_size\":null,\"partitions\":[");
+  }
+  _storage_partitions(&o, s);
+  if (_room(&o, PIECE_SMALL))
+    heaptop_buf_printf(&o.buf, "],\"partitions_truncated\":%s,\"nvs\":", s->partitions_truncated ? "true" : "false");
+
+  if (s->nvs_present)
+  {
+    _storage_nvs(&o, s);
+  }
+  else if (_room(&o, PIECE_SMALL))
+  {
+    heaptop_buf_printf(&o.buf, "null");
+  }
+
   if (_room(&o, PIECE_SMALL))
     heaptop_buf_printf(&o.buf, "}");
   _flush(&o);
